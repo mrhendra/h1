@@ -1,49 +1,551 @@
 <!DOCTYPE html>
-<html>
+<html lang="id">
 <head>
-<meta charset="UTF-8">
-<title>Teachable Machine Webcam</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Face Detection — Teachable Machine</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+
+  <!-- Teachable Machine + TensorFlow -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+  <style>
+    :root {
+      --bg:      #080c10;
+      --surface: #0f1419;
+      --border:  #1c2530;
+      --accent:  #0df2a0;
+      --blue:    #1eb8ff;
+      --red:     #ff3d5a;
+      --yellow:  #ffe066;
+      --text:    #dce8f0;
+      --muted:   #4a6070;
+      --glow-g:  0 0 24px rgba(13,242,160,.35);
+      --glow-b:  0 0 24px rgba(30,184,255,.35);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin:0; padding:0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px 60px;
+      overflow-x: hidden;
+    }
+
+    /* ── AMBIENT BACKGROUND ── */
+    body::before {
+      content:'';
+      position:fixed; inset:0; pointer-events:none;
+      background:
+        radial-gradient(ellipse 60% 50% at 10% 10%, rgba(13,242,160,.07) 0%, transparent 70%),
+        radial-gradient(ellipse 50% 40% at 90% 85%, rgba(30,184,255,.06) 0%, transparent 70%);
+    }
+
+    /* ── HEADER ── */
+    header {
+      text-align: center;
+      margin-bottom: 36px;
+      animation: fadeDown .6s ease both;
+    }
+
+    .tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid rgba(13,242,160,.4);
+      padding: 5px 14px; border-radius: 2px;
+      margin-bottom: 16px;
+    }
+    .tag-dot {
+      width:6px; height:6px; border-radius:50%;
+      background: var(--accent);
+      animation: pulse 1.5s infinite;
+    }
+
+    h1 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(42px, 8vw, 80px);
+      letter-spacing: 3px;
+      line-height: 1;
+      background: linear-gradient(135deg, #fff 20%, var(--blue) 80%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px; color: var(--muted); margin-top: 10px;
+      letter-spacing: 1.5px;
+    }
+
+    /* ── LAYOUT ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 20px;
+      width: 100%; max-width: 920px;
+      animation: fadeUp .7s .1s ease both;
+    }
+    @media (max-width: 700px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+
+    /* ── CAMERA CARD ── */
+    .cam-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+
+    .cam-bar {
+      display: flex; align-items: center;
+      padding: 13px 18px;
+      border-bottom: 1px solid var(--border);
+      gap: 8px;
+    }
+    .dot { width:9px; height:9px; border-radius:50%; }
+    .d1 { background: var(--red); }
+    .d2 { background: var(--yellow); }
+    .d3 { background: var(--accent); }
+    .cam-bar-label {
+      font-family:'IBM Plex Mono',monospace;
+      font-size:11px; color:var(--muted);
+      margin-left: auto; letter-spacing:1px;
+    }
+    #live-badge {
+      display: none;
+      font-family:'IBM Plex Mono',monospace;
+      font-size:10px; letter-spacing:2px;
+      color: var(--bg); background: var(--red);
+      padding: 2px 8px; border-radius: 3px;
+      animation: blinkBg 1.2s infinite;
+      margin-left: 8px;
+    }
+
+    .video-area {
+      position: relative;
+      width: 100%; aspect-ratio: 4/3;
+      background: #04080c;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+
+    #webcam-container {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #webcam-container canvas {
+      width: 100% !important; height: 100% !important;
+      object-fit: cover;
+    }
+
+    /* scan line overlay */
+    .scan-line {
+      display: none;
+      position: absolute; left:0; right:0; height:2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: scanMove 3s ease-in-out infinite;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .running .scan-line { display: block; }
+
+    /* corner brackets */
+    .corners { position:absolute; inset:12px; pointer-events:none; z-index:5; }
+    .corners::before, .corners::after,
+    .corners span::before, .corners span::after {
+      content:''; position:absolute;
+      width:20px; height:20px;
+      border-color: var(--accent);
+      border-style: solid;
+      opacity: 0;
+      transition: opacity .4s;
+    }
+    .running .corners::before,
+    .running .corners::after,
+    .running .corners span::before,
+    .running .corners span::after { opacity: .7; }
+
+    .corners::before { top:0;left:0; border-width:2px 0 0 2px; }
+    .corners::after  { top:0;right:0; border-width:2px 2px 0 0; }
+    .corners span::before { bottom:0;left:0; border-width:0 0 2px 2px; }
+    .corners span::after  { bottom:0;right:0; border-width:0 2px 2px 0; }
+
+    .placeholder {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 12px;
+      opacity: .2; user-select: none;
+    }
+    .placeholder svg { width:64px; height:64px; }
+    .placeholder p { font-family:'IBM Plex Mono',monospace; font-size:11px; }
+
+    /* cam bottom controls */
+    .cam-footer {
+      padding: 16px 18px;
+      border-top: 1px solid var(--border);
+      display: flex; gap: 10px; align-items: center;
+    }
+
+    .btn {
+      font-family:'IBM Plex Mono',monospace;
+      font-size:11px; font-weight:600;
+      letter-spacing:1px; text-transform:uppercase;
+      padding:10px 20px; border:none;
+      border-radius:8px; cursor:pointer;
+      transition: all .2s;
+    }
+    .btn-start {
+      background: var(--accent); color: #000;
+      flex: 1;
+    }
+    .btn-start:hover:not(:disabled) { filter:brightness(1.1); box-shadow: var(--glow-g); }
+    .btn-stop {
+      background: transparent; color: var(--red);
+      border: 1px solid rgba(255,61,90,.4);
+    }
+    .btn-stop:hover { background: rgba(255,61,90,.1); }
+    .btn:disabled { opacity:.3; cursor:not-allowed; }
+
+    #status-text {
+      font-family:'IBM Plex Mono',monospace;
+      font-size:11px; color:var(--muted);
+      margin-left: auto;
+    }
+
+    /* ── SIDEBAR ── */
+    .sidebar { display:flex; flex-direction:column; gap:16px; }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+    }
+
+    .panel-title {
+      font-family:'IBM Plex Mono',monospace;
+      font-size:10px; letter-spacing:2.5px;
+      text-transform:uppercase; color:var(--accent);
+      margin-bottom:16px;
+      display:flex; align-items:center; gap:8px;
+    }
+    .panel-title::after {
+      content:''; flex:1; height:1px;
+      background: linear-gradient(90deg, var(--border), transparent);
+    }
+
+    /* ── TOP RESULT ── */
+    #top-result {
+      font-family:'Bebas Neue',sans-serif;
+      font-size: 38px; letter-spacing:2px;
+      color: var(--accent);
+      min-height: 46px;
+      transition: color .3s;
+      word-break: break-word;
+    }
+    #top-conf {
+      font-family:'IBM Plex Mono',monospace;
+      font-size:12px; color:var(--muted);
+      margin-top:4px;
+    }
+
+    /* ── BARS ── */
+    .bar-list { display:flex; flex-direction:column; gap:12px; }
+
+    .bar-item {}
+    .bar-header {
+      display:flex; justify-content:space-between;
+      font-size:12px; font-weight:500;
+      margin-bottom:5px;
+    }
+    .bar-name { color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
+    .bar-pct  { font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
+    .bar-track {
+      width:100%; height:6px;
+      background: var(--border);
+      border-radius:4px; overflow:hidden;
+    }
+    .bar-fill {
+      height:100%; border-radius:4px;
+      background: linear-gradient(90deg, var(--blue), var(--accent));
+      transition: width .25s ease;
+      width: 0%;
+    }
+    .bar-fill.top { background: linear-gradient(90deg, var(--accent), #80ffcc); }
+
+    /* ── INFO PANEL ── */
+    .info-row {
+      display:flex; justify-content:space-between;
+      font-size:12px; padding:8px 0;
+      border-bottom:1px solid var(--border);
+    }
+    .info-row:last-child { border-bottom:none; }
+    .info-key { color:var(--muted); font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:1px; }
+    .info-val { color:var(--text); font-weight:500; }
+
+    /* ── ANIMATIONS ── */
+    @keyframes fadeDown {
+      from { opacity:0; transform:translateY(-20px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+    @keyframes fadeUp {
+      from { opacity:0; transform:translateY(20px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+    @keyframes scanMove {
+      0%  { top:0%; opacity:0; }
+      5%  { opacity:1; }
+      95% { opacity:1; }
+      100%{ top:100%; opacity:0; }
+    }
+    @keyframes pulse {
+      0%,100%{ opacity:1; transform:scale(1); }
+      50%    { opacity:.4; transform:scale(.7); }
+    }
+    @keyframes blinkBg {
+      0%,100%{ opacity:1; }
+      50%    { opacity:.4; }
+    }
+  </style>
 </head>
 <body>
-<h1>Deteksi Wajah</h1>
-<button type="button" onclick="init()">Mulai Kamera</button>
-<div><canvas id="canvas"></canvas></div>
-<div id="label-container"></div>
-<script
-src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teacha
-blemachine-image.min.js"></script>
-<script type="text/javascript">
-const URL = "https://teachablemachine.withgoogle.com/models/0B7mthiO1/;"
-let model, webcam, labelContainer, maxPredictions;
-  async function init() {
-const modelURL = URL + "model.json";
-const metadataURL = URL + "metadata.json";
-model = await tmImage.load(modelURL, metadataURL);
-maxPredictions = model.getTotalClasses();
-const flip = true;
-webcam = new tmImage.Webcam(200, 200, flip);
-await webcam.setup();
-await webcam.play();
-window.requestAnimationFrame(loop);
-document.getElementById("canvas").appendChild(webcam.canvas);
-labelContainer = document.getElementById("label-container");
-for (let i = 0; i < maxPredictions; i++) {
-labelContainer.appendChild(document.createElement("div"));
-}
-}
-async function loop() {
-webcam.update();
-await predict();
-window.requestAnimationFrame(loop);
-}
-async function predict() {
-const prediction = await model.predict(webcam.canvas);
-for (let i = 0; i < maxPredictions; i++) {
-const classPrediction = prediction[i].className + ": " +
-(prediction[i].probability * 100).toFixed(2) + "%";
-labelContainer.childNodes[i].innerHTML = classPrediction;
-}
-}
+
+<header>
+  <div class="tag"><span class="tag-dot"></span>AI Vision System</div>
+  <h1>FACE DETECTION</h1>
+  <p class="subtitle">TEACHABLE MACHINE · MODEL: 0B7mthiO1</p>
+</header>
+
+<div class="layout">
+
+  <!-- CAMERA -->
+  <div class="cam-card" id="cam-card">
+    <div class="cam-bar">
+      <div class="dot d1"></div>
+      <div class="dot d2"></div>
+      <div class="dot d3"></div>
+      <span class="cam-bar-label">WEBCAM FEED</span>
+      <span id="live-badge">● REC</span>
+    </div>
+
+    <div class="video-area">
+      <div id="webcam-container"></div>
+      <div class="scan-line"></div>
+      <div class="corners"><span></span></div>
+
+      <div class="placeholder" id="placeholder">
+        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="4" y="4" width="56" height="56" rx="8" stroke="currentColor" stroke-width="2"/>
+          <circle cx="32" cy="26" r="10" stroke="currentColor" stroke-width="2"/>
+          <path d="M10 56c0-12 10-20 22-20s22 8 22 20" stroke="currentColor" stroke-width="2"/>
+        </svg>
+        <p>KAMERA BELUM AKTIF</p>
+      </div>
+    </div>
+
+    <div class="cam-footer">
+      <button class="btn btn-start" id="btn-start" onclick="startDetection()">▶ Mulai Deteksi</button>
+      <button class="btn btn-stop" id="btn-stop" onclick="stopDetection()" disabled>■ Stop</button>
+      <span id="status-text">IDLE</span>
+    </div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+
+    <!-- TOP PREDICTION -->
+    <div class="panel">
+      <div class="panel-title">Prediksi Utama</div>
+      <div id="top-result">—</div>
+      <div id="top-conf">Confidence: —</div>
+    </div>
+
+    <!-- ALL LABELS -->
+    <div class="panel">
+      <div class="panel-title">Semua Kelas</div>
+      <div class="bar-list" id="bar-list">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);">
+          Belum ada data…
+        </div>
+      </div>
+    </div>
+
+    <!-- INFO -->
+    <div class="panel">
+      <div class="panel-title">Info Model</div>
+      <div>
+        <div class="info-row">
+          <span class="info-key">Model URL</span>
+          <span class="info-val" style="font-size:10px;font-family:'IBM Plex Mono',monospace;color:var(--blue);">0B7mthiO1</span>
+        </div>
+        <div class="info-row">
+          <span class="info-key">Framework</span>
+          <span class="info-val">TensorFlow.js</span>
+        </div>
+        <div class="info-row">
+          <span class="info-key">Status</span>
+          <span class="info-val" id="model-status">Belum dimuat</span>
+        </div>
+        <div class="info-row">
+          <span class="info-key">FPS</span>
+          <span class="info-val" id="fps-display">—</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  const MODEL_URL = "https://teachablemachine.withgoogle.com/models/0B7mthiO1/";
+
+  let model, webcam, maxPredictions;
+  let running = false;
+  let frameCount = 0, lastFpsTime = performance.now();
+  let animFrameId = null;
+
+  const $ = id => document.getElementById(id);
+
+  async function startDetection() {
+    $('btn-start').disabled = true;
+    setStatus('Memuat model…');
+    $('model-status').textContent = 'Memuat…';
+
+    try {
+      const modelURL      = MODEL_URL + "model.json";
+      const metadataURL   = MODEL_URL + "metadata.json";
+      model = await tmImage.load(modelURL, metadataURL);
+      maxPredictions = model.getTotalClasses();
+      $('model-status').textContent = `Siap (${maxPredictions} kelas)`;
+    } catch (e) {
+      alert("Gagal memuat model: " + e.message);
+      $('btn-start').disabled = false;
+      setStatus('ERROR');
+      return;
+    }
+
+    setStatus('Membuka kamera…');
+    try {
+      webcam = new tmImage.Webcam(480, 360, true); // flip=true
+      await webcam.setup();
+      await webcam.play();
+    } catch (e) {
+      alert("Tidak bisa mengakses kamera: " + e.message);
+      $('btn-start').disabled = false;
+      setStatus('ERROR KAMERA');
+      return;
+    }
+
+    // attach canvas
+    const container = $('webcam-container');
+    container.appendChild(webcam.canvas);
+    $('placeholder').style.display = 'none';
+    $('live-badge').style.display  = 'inline-block';
+    document.getElementById('cam-card').classList.add('running');
+
+    // init bars
+    buildBars();
+
+    running = true;
+    $('btn-stop').disabled = false;
+    setStatus('RUNNING');
+    loop();
+  }
+
+  function buildBars() {
+    const list = $('bar-list');
+    list.innerHTML = '';
+    for (let i = 0; i < maxPredictions; i++) {
+      const div = document.createElement('div');
+      div.className = 'bar-item';
+      div.id = 'bar-' + i;
+      div.innerHTML = `
+        <div class="bar-header">
+          <span class="bar-name" id="bname-${i}">Kelas ${i}</span>
+          <span class="bar-pct" id="bpct-${i}">0%</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" id="bfill-${i}"></div></div>
+      `;
+      list.appendChild(div);
+    }
+  }
+
+  async function loop() {
+    if (!running) return;
+    webcam.update();
+
+    const preds = await model.predict(webcam.canvas);
+
+    // find top
+    let topIdx = 0;
+    preds.forEach((p, i) => { if (p.probability > preds[topIdx].probability) topIdx = i; });
+
+    // update top panel
+    const topLabel = preds[topIdx].className;
+    const topConf  = (preds[topIdx].probability * 100).toFixed(1);
+    $('top-result').textContent = topLabel;
+    $('top-conf').textContent   = `Confidence: ${topConf}%`;
+
+    // update bars
+    preds.forEach((p, i) => {
+      const pct = (p.probability * 100).toFixed(1);
+      const el_name  = $('bname-' + i);
+      const el_pct   = $('bpct-'  + i);
+      const el_fill  = $('bfill-' + i);
+      if (el_name) el_name.textContent = p.className;
+      if (el_pct)  el_pct.textContent  = pct + '%';
+      if (el_fill) {
+        el_fill.style.width = pct + '%';
+        el_fill.className   = 'bar-fill' + (i === topIdx ? ' top' : '');
+      }
+    });
+
+    // FPS
+    frameCount++;
+    const now = performance.now();
+    if (now - lastFpsTime >= 1000) {
+      $('fps-display').textContent = frameCount + ' fps';
+      frameCount   = 0;
+      lastFpsTime  = now;
+    }
+
+    animFrameId = requestAnimationFrame(loop);
+  }
+
+  function stopDetection() {
+    running = false;
+    if (animFrameId) cancelAnimationFrame(animFrameId);
+    if (webcam) { webcam.stop(); }
+
+    document.getElementById('cam-card').classList.remove('running');
+    $('webcam-container').innerHTML = '';
+    $('placeholder').style.display  = 'flex';
+    $('live-badge').style.display   = 'none';
+    $('btn-start').disabled = false;
+    $('btn-stop').disabled  = true;
+    $('top-result').textContent = '—';
+    $('top-conf').textContent   = 'Confidence: —';
+    $('bar-list').innerHTML = '<div style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:var(--muted);">Belum ada data…</div>';
+    $('fps-display').textContent = '—';
+    $('model-status').textContent = 'Berhenti';
+    setStatus('IDLE');
+  }
+
+  function setStatus(msg) {
+    $('status-text').textContent = msg;
+  }
 </script>
 </body>
 </html>
